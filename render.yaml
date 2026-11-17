@@ -1,0 +1,15 @@
+# Backend for Socket.IO — deploy alongside the Vercel frontend.
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: sam-loc-api
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npx tsx server/index.ts
+    envVars:
+      - key: SERVE_WEB
+        value: "0"
+      - key: CORS_ORIGIN
+        # Set to your Vercel URL after deploy, e.g. https://sam-loc-online.vercel.app
+        sync: false

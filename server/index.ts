@@ -13,13 +13,30 @@ const nanoid = customAlphabet('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', 6)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const distDir = path.resolve(__dirname, '../dist')
 
+/** Comma-separated origins, or * / empty for reflect-any (dev-friendly). */
+function corsOrigin(): boolean | string | string[] {
+  const raw = process.env.CORS_ORIGIN?.trim()
+  if (!raw || raw === '*') return true
+  const list = raw.split(',').map((s) => s.trim()).filter(Boolean)
+  return list.length <= 1 ? list[0] ?? true : list
+}
+
+const origin = corsOrigin()
+
 const app = express()
-app.use(cors())
+app.use(
+  cors({
+    origin,
+    methods: ['GET', 'POST'],
+  }),
+)
 app.get('/health', (_req, res) => {
   res.json({ ok: true })
 })
 
-if (existsSync(distDir)) {
+// Optional: serve built SPA from the same host (Render all-in-one).
+// On Vercel, the frontend is separate — leave dist empty / unused here.
+if (existsSync(distDir) && process.env.SERVE_WEB !== '0') {
   app.use(express.static(distDir))
   app.get(/.*/, (_req, res) => {
     res.sendFile(path.join(distDir, 'index.html'))
@@ -28,7 +45,7 @@ if (existsSync(distDir)) {
 
 const httpServer = createServer(app)
 const io = new Server(httpServer, {
-  cors: { origin: true, methods: ['GET', 'POST'] },
+  cors: { origin, methods: ['GET', 'POST'] },
 })
 
 const rooms = new Map<string, Room>()

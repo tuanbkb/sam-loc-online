@@ -126,6 +126,9 @@ export function GameTable({
                 .join(' ')}
             >
               {theirTurn && <span className="turn-chip">Đang đánh</span>}
+              {!theirTurn && p.passed && room.lastCombo && (
+                <span className="turn-chip skip-chip">Đã bỏ</span>
+              )}
               {flashDelta != null && (
                 <span className={`float-score ${flashDelta > 0 ? 'pos' : 'neg'}`}>
                   {flashDelta > 0 ? `+${flashDelta}` : flashDelta}
@@ -279,12 +282,17 @@ export function GameTable({
       </div>
 
       <footer className={`hand-dock ${isMyTurn ? 'active-turn' : room.phase === 'playing' ? 'waiting-turn' : ''}`}>
-        {isMyTurn && (
+        {isMyTurn && !me?.passed && (
           <div className="your-turn-banner" role="status">
             Đến lượt bạn — chọn bài rồi nhấn Đánh
           </div>
         )}
-        {room.phase === 'playing' && !isMyTurn && turnPlayer && (
+        {room.phase === 'playing' && me?.passed && (
+          <div className="wait-turn-banner passed-banner" role="status">
+            Bạn đã bỏ vòng này — chờ người khác hết lượt mới được đánh tiếp
+          </div>
+        )}
+        {room.phase === 'playing' && !isMyTurn && !me?.passed && turnPlayer && (
           <div className="wait-turn-banner" role="status">
             Đang chờ {turnPlayer.name}…
           </div>

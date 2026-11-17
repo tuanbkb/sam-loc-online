@@ -380,10 +380,14 @@ export class Room {
       return { ok: true, scoreFlash }
     }
 
-    this.clearPassesExcept(p.id)
-    this.advanceTurn(p.id)
-    if (!scoreFlash) {
-      this.message = `${p.name} đánh ${combo.type}.`
+    // Passes stick for the whole trick — do NOT clear when someone beats.
+    if (this.isTrickOver(p.id)) {
+      this.endTrick(p)
+    } else {
+      this.advanceTurn(p.id)
+      if (!scoreFlash) {
+        this.message = `${p.name} đánh ${combo.type}.`
+      }
     }
     return { ok: true, scoreFlash }
   }
@@ -400,10 +404,8 @@ export class Room {
     if (!this.lastCombo) {
       return { ok: false, error: 'Bạn đang giữ quyền đánh — phải đánh bài.' }
     }
-    if (this.samDeclarerId === playerId) {
-      // Sam declarer can pass? Usually they keep leading — but if someone hasn't beaten yet and they... 
-      // Actually in Sâm mode, others try to beat; declarer leads each new trick. Declarer shouldn't need to pass on their own lead.
-      // If somehow last combo is theirs and others passed, trick resets. If last combo is opponent's, declarer lost already.
+    if (p.passed) {
+      return { ok: false, error: 'Bạn đã bỏ lượt vòng này.' }
     }
 
     p.passed = true
@@ -414,18 +416,13 @@ export class Room {
       kind: 'pass',
     })
 
-    const active = this.players.filter((x) => x.hand.length > 0)
-    const notPassed = active.filter((x) => !x.passed)
-    if (notPassed.length === 1 && this.lastComboPlayerId === notPassed[0].id) {
-      // Trick won — new lead
-      const leader = notPassed[0]
-      this.lastCombo = null
-      this.lastComboPlayerId = null
-      this.clearAllPasses()
-      this.currentTurnId = leader.id
-      this.leadPlayerId = leader.id
-      this.message = `${leader.name} được quyền đánh mới.`
-      return { ok: true }
+    // Trick ends when every other player with cards has skipped
+    if (this.lastComboPlayerId && this.isTrickOver(this.lastComboPlayerId)) {
+      const leader = this.findById(this.lastComboPlayerId)
+      if (leader && leader.hand.length > 0) {
+        this.endTrick(leader)
+        return { ok: true }
+      }
     }
 
     this.advanceTurn(p.id)
@@ -556,6 +553,25 @@ export class Room {
     this.clearAllPasses()
   }
 
+  /**
+   * A trick is over when every player who still has cards — except the one who
+   * played the current combo — has passed. That player then leads the next trick.
+   */
+  private isTrickOver(lastPlayerId: string): boolean {
+    const withCards = this.playersWithCards()
+    if (withCards.length <= 1) return true
+    return withCards.every((p) => p.id === lastPlayerId || p.passed)
+  }
+
+  private endTrick(leader: InternalPlayer): void {
+    this.lastCombo = null
+    this.lastComboPlayerId = null
+    this.clearAllPasses()
+    this.currentTurnId = leader.id
+    this.leadPlayerId = leader.id
+    this.message = `${leader.name} thắng vòng — được đánh mới.`
+  }
+
   private playersWithCards(): InternalPlayer[] {
     return [...this.players]
       .filter((p) => p.hand.length > 0)
@@ -573,10 +589,8 @@ export class Room {
         return
       }
     }
-  }
-
-  private clearPassesExcept(_exceptId: string): void {
-    for (const p of this.players) p.passed = false
+    // Everyone else passed — caller should have ended the trick already
+    this.currentTurnId = fromId
   }
 
   private clearAllPasses(): void {
