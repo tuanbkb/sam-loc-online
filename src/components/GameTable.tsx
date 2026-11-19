@@ -27,6 +27,7 @@ export function GameTable({
   onLeave,
 }: Props) {
   const { room, you } = state
+  const spectating = !!state.spectating
   const me = room.players.find((p) => p.id === you.playerId)
   const [selected, setSelected] = useState<string[]>([])
 
@@ -38,15 +39,20 @@ export function GameTable({
     return rotated
   }, [room.players, me, you.playerId])
 
-  const isMyTurn = room.phase === 'playing' && room.currentTurnId === you.playerId
+  const isMyTurn =
+    !spectating && room.phase === 'playing' && room.currentTurnId === you.playerId
   const turnPlayer = room.players.find((p) => p.id === room.currentTurnId)
   const isMyDeclare =
+    !spectating &&
     room.phase === 'declaring' &&
     me &&
     room.declaringSeat === me.seat &&
     !me.hasDeclared
-  const turnBanner =
-    room.phase === 'playing'
+  const turnBanner = spectating
+    ? room.phase === 'playing' && turnPlayer
+      ? `Đang xem · lượt ${turnPlayer.name}`
+      : `Đang xem · ${room.message}`
+    : room.phase === 'playing'
       ? isMyTurn
         ? 'Đến lượt bạn'
         : turnPlayer
@@ -109,7 +115,7 @@ export function GameTable({
 
       <div className="felt">
         <div className="opponents">
-          {others.map((p) => {
+          {(spectating ? room.players : others).map((p) => {
             const theirTurn = room.phase === 'playing' && room.currentTurnId === p.id
             const flashDelta = scoreFlash?.changes.find((c) => c.playerId === p.id)?.delta
             return (
@@ -278,6 +284,16 @@ export function GameTable({
         )}
       </div>
 
+      {spectating ? (
+        <footer className="hand-dock watching">
+          <div className="watch-banner" role="status">
+            Đang xem trực tiếp — bạn không ngồi vào bàn và không thể đánh bài
+          </div>
+          {room.phase === 'playing' && turnPlayer && (
+            <p className="selection-hint">Lượt của {turnPlayer.name}</p>
+          )}
+        </footer>
+      ) : (
       <footer className={`hand-dock ${isMyTurn ? 'active-turn' : room.phase === 'playing' ? 'waiting-turn' : ''}`}>
         {isMyTurn && (
           <div className="your-turn-banner" role="status">
@@ -351,6 +367,7 @@ export function GameTable({
           </div>
         )}
       </footer>
+      )}
     </div>
   )
 }

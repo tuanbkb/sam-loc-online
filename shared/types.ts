@@ -99,6 +99,17 @@ export interface PrivateState {
 export interface ClientState {
   room: RoomPublicState
   you: PrivateState
+  /** Live viewer — no hand, cannot play */
+  spectating?: boolean
+}
+
+export interface ChatMessage {
+  id: string
+  playerId: string
+  name: string
+  text: string
+  spectating: boolean
+  at: number
 }
 
 /** Mid-round point change popup (e.g. chặt heo) */

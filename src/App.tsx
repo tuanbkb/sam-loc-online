@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import type { ClientState, ScoreFlash } from '../shared/types'
+import type { ChatMessage, ClientState, ScoreFlash } from '../shared/types'
+import { ChatPanel } from './components/ChatPanel'
 import { GameTable } from './components/GameTable'
 import { Home } from './components/Home'
 import { Lobby } from './components/Lobby'
@@ -21,6 +22,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [scoreFlash, setScoreFlash] = useState<ScoreFlash | null>(null)
+  const [chat, setChat] = useState<ChatMessage[]>([])
   const clearScoreFlash = useCallback(() => setScoreFlash(null), [])
   const initialCode = parseRoomFromPath()
 
@@ -31,10 +33,12 @@ export default function App() {
       setError(null)
       if (s.room.code) {
         window.history.replaceState(null, '', `/r/${s.room.code}`)
-        localStorage.setItem(
-          sessionKey(s.room.code),
-          JSON.stringify({ playerId: s.you.playerId }),
-        )
+        if (!s.spectating) {
+          localStorage.setItem(
+            sessionKey(s.room.code),
+            JSON.stringify({ playerId: s.you.playerId }),
+          )
+        }
       }
     }
 
@@ -47,46 +51,67 @@ export default function App() {
       setScoreFlash(flash)
     }
 
+    function onChatHistory(list: ChatMessage[]) {
+      setChat(list)
+    }
+
+    function onChat(message: ChatMessage) {
+      setChat((prev) =>
+        prev.some((m) => m.id === message.id) ? prev : [...prev, message].slice(-80),
+      )
+    }
+
     socket.on('state', onState)
     socket.on('errorMsg', onErrorMsg)
     socket.on('scoreFlash', onScoreFlash)
+    socket.on('chatHistory', onChatHistory)
+    socket.on('chat', onChat)
     if (!socket.connected) socket.connect()
 
-    // Auto-rejoin from link + saved session
+    // Link: rejoin as player, or watch live if the hand already started
     const code = parseRoomFromPath()
     if (code) {
       const raw = localStorage.getItem(sessionKey(code))
-      const name = localStorage.getItem('samloc-name') ?? ''
+      const name = localStorage.getItem('samloc-name') || 'Khán giả'
+      let playerId: string | undefined
       if (raw) {
         try {
-          const { playerId } = JSON.parse(raw) as { playerId: string }
-          setBusy(true)
-          const tryJoin = () => {
-            socket.emit('joinRoom', { code, name, playerId }, (res) => {
-              setBusy(false)
-              if (!res.ok) {
-                localStorage.removeItem(sessionKey(code))
-                setError(res.error)
-              } else {
-                localStorage.setItem(
-                  sessionKey(res.code),
-                  JSON.stringify({ playerId: res.playerId }),
-                )
-              }
-            })
-          }
-          if (socket.connected) tryJoin()
-          else socket.once('connect', tryJoin)
+          playerId = (JSON.parse(raw) as { playerId: string }).playerId
         } catch {
           /* ignore */
         }
       }
+      const enter = () => {
+        socket.emit('roomInfo', { code }, (info) => {
+          if (!info.ok) return
+          if (!info.live && !playerId) return
+          setBusy(true)
+          socket.emit('joinRoom', { code, name, playerId }, (res) => {
+            setBusy(false)
+            if (!res.ok) {
+              if (playerId) localStorage.removeItem(sessionKey(code))
+              setError(res.error)
+              return
+            }
+            if (!res.spectating) {
+              localStorage.setItem(
+                sessionKey(res.code),
+                JSON.stringify({ playerId: res.playerId }),
+              )
+            }
+          })
+        })
+      }
+      if (socket.connected) enter()
+      else socket.once('connect', enter)
     }
 
     return () => {
       socket.off('state', onState)
       socket.off('errorMsg', onErrorMsg)
       socket.off('scoreFlash', onScoreFlash)
+      socket.off('chatHistory', onChatHistory)
+      socket.off('chat', onChat)
     }
   }, [])
 
@@ -135,10 +160,12 @@ export default function App() {
           setError(res.error)
           return
         }
-        localStorage.setItem(
-          sessionKey(res.code),
-          JSON.stringify({ playerId: res.playerId }),
-        )
+        if (!res.spectating) {
+          localStorage.setItem(
+            sessionKey(res.code),
+            JSON.stringify({ playerId: res.playerId }),
+          )
+        }
       })
     })
   }
@@ -146,7 +173,8 @@ export default function App() {
   function leave() {
     const code = state?.room.code
     socket.emit('leaveRoom')
-    if (code) localStorage.removeItem(sessionKey(code))
+    if (code && !state?.spectating) localStorage.removeItem(sessionKey(code))
+    setChat([])
     setState(null)
     window.history.replaceState(null, '', '/')
   }
@@ -162,7 +190,7 @@ export default function App() {
         error={error}
       />
     )
-  } else if (state.room.phase === 'lobby') {
+  } else if (!state.spectating && state.room.phase === 'lobby') {
     body = (
       <Lobby
         state={state}
@@ -189,6 +217,13 @@ export default function App() {
   return (
     <div className="app-shell">
       {body}
+      {state && (
+        <ChatPanel
+          messages={chat}
+          youId={state.you.playerId}
+          onSend={(text) => socket.emit('chat', text)}
+        />
+      )}
       {toast && <div className="toast">{toast}</div>}
     </div>
   )

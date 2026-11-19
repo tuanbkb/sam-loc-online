@@ -16,6 +16,7 @@ import {
 } from '../shared/scoring.js'
 import type {
   Card,
+  ChatMessage,
   ClientState,
   Combo,
   PlayRecord,
@@ -49,9 +50,18 @@ interface InternalPlayer {
   isReady: boolean
 }
 
+interface Spectator {
+  id: string
+  name: string
+  socketId: string
+}
+
 export class Room {
   readonly code: string
   private players: InternalPlayer[] = []
+  private spectators: Spectator[] = []
+  private chat: ChatMessage[] = []
+  private lastChatAt = new Map<string, number>()
   private phase: RoomPhase = 'lobby'
   private currentTurnId: string | null = null
   private leadPlayerId: string | null = null
@@ -71,6 +81,15 @@ export class Room {
 
   get playerCount(): number {
     return this.players.length
+  }
+
+  /** A hand is in progress (or just finished) — new arrivals watch instead of sitting down. */
+  get isLive(): boolean {
+    return this.phase !== 'lobby'
+  }
+
+  listSpectators(): Spectator[] {
+    return this.spectators
   }
 
   get isEmpty(): boolean {
@@ -456,6 +475,26 @@ export class Room {
     return { ok: true }
   }
 
+  addSpectator(
+    id: string,
+    name: string,
+    socketId: string,
+  ): { ok: true; playerId: string } | { ok: false; error: string } {
+    if (!this.isLive) {
+      return { ok: false, error: 'Ván chưa bắt đầu — hãy vào bàn.' }
+    }
+    const trimmed = name.trim().slice(0, 16) || 'Khán giả'
+    this.spectators = this.spectators.filter((s) => s.socketId !== socketId)
+    this.spectators.push({ id, name: trimmed, socketId })
+    return { ok: true, playerId: id }
+  }
+
+  removeSpectator(socketId: string): boolean {
+    const before = this.spectators.length
+    this.spectators = this.spectators.filter((s) => s.socketId !== socketId)
+    return this.spectators.length !== before
+  }
+
   getClientState(playerId: string): ClientState | null {
     const you = this.findById(playerId)
     if (!you) return null
@@ -465,6 +504,44 @@ export class Room {
         playerId,
         hand: sortHand(you.hand),
       },
+    }
+  }
+
+  addChat(authorId: string, text: string, spectating: boolean): ChatMessage | { error: string } | null {
+    const clean = text.replace(/\s+/g, ' ').trim().slice(0, 200)
+    if (!clean) return null
+    const now = Date.now()
+    const prev = this.lastChatAt.get(authorId) ?? 0
+    if (now - prev < 400) return { error: 'Chậm lại một chút.' }
+    const player = this.findById(authorId)
+    const spec = this.spectators.find((s) => s.id === authorId)
+    const name = player?.name ?? spec?.name
+    if (!name) return null
+    this.lastChatAt.set(authorId, now)
+    const msg: ChatMessage = {
+      id: `${now}-${authorId}-${this.chat.length}`,
+      playerId: authorId,
+      name,
+      text: clean,
+      spectating: spectating || !player,
+      at: now,
+    }
+    this.chat.push(msg)
+    if (this.chat.length > 80) this.chat.splice(0, this.chat.length - 80)
+    return msg
+  }
+
+  recentChat(): ChatMessage[] {
+    return this.chat.slice(-50)
+  }
+
+  getSpectatorState(spectatorId: string): ClientState | null {
+    const spec = this.spectators.find((s) => s.id === spectatorId)
+    if (!spec) return null
+    return {
+      room: this.getPublicState(),
+      you: { playerId: spec.id, hand: [] },
+      spectating: true,
     }
   }
 
